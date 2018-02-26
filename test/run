@@ -98,18 +98,6 @@ function test_redis() {
   echo
 }
 
-# to be replaced with ct_create_container
-function create_container() {
-  local name=$1 ; shift
-  cidfile="$CID_FILE_DIR/$name"
-  # create container with a cidfile in a directory for cleanup
-  local container_id
-  [ "${DEBUG:-0}" -eq 1 ] && echo "DEBUG: docker run ${DOCKER_ARGS:-} --cidfile $cidfile -d \"$@\" $IMAGE_NAME ${CONTAINER_ARGS:-}" >&2
-  container_id="$(docker run ${DOCKER_ARGS:-} --cidfile $cidfile -d "$@" $IMAGE_NAME ${CONTAINER_ARGS:-})"
-  [ "${DEBUG:-0}" -eq 1 ] && echo "Created container $container_id"
-  return 0
-}
-
 function run_change_password_test() {
   local tmpdir=$(mktemp -d)
   mkdir "${tmpdir}/data" && chmod -R a+rwx "${tmpdir}"
@@ -164,23 +152,8 @@ function assert_local_access() {
   docker exec $(ct_get_cid "$id") bash -c 'redis-cli ping'
 }
 
-# Make sure the invocation of docker run fails.
-function assert_container_creation_fails() {
-
-  # Time the docker run command. It should fail. If it doesn't fail,
-  # redis will keep running so we kill it with SIGKILL to make sure
-  # timeout returns a non-zero value.
-  local ret=0
-  timeout -s 9 --preserve-status 60s docker run --rm "$@" $IMAGE_NAME >/dev/null || ret=$?
-
-  # Timeout will exit with a high number.
-  if [ $ret -gt 10 ]; then
-    return 1
-  fi
-}
-
 function try_image_invalid_combinations() {
-  assert_container_creation_fails -e REDIS_PASSWORD="pass with space" "$@"
+  ct_assert_container_creation_fails -e REDIS_PASSWORD="bad\/password" "$@"
 }
 
 function run_container_creation_tests() {
@@ -212,8 +185,50 @@ run_doc_test() {
   echo
 }
 
-function run_s2i_config_test() {
+test_the_app_image() {
+  local container_name=$1
+  local mount_opts=$2
+  echo "  Testing s2i app image with invalid configuration"
+  # test whether s2i extension doesn't break basic functionality
+  try_image_invalid_combinations
+  
+  # test whether s2i provided config is overridable using envvars
+  run_change_password_test
+
+  # test whether s2i provided config took place
+
+  test_connection ${container_name} "random_pass"
+
+    CONTAINER_ARGS="
+-e REDIS_PASSWORD=''
+${mount_opts}
+" ct_create_container "$container_name"
+
+  test "$(redis_cmd $(ct_get_cip $container_name) "" CONFIG GET maxclients)" == '5000'
+  
+  docker stop "$(get_cid $container_name)" > /dev/null
+
+}
+
+run_s2i_config_test() {
   echo "testing s2i functionality \n null"
+  echo "  Testing s2i usage"
+  s2i usage ${S2I_ARGS} ${IMAGE_NAME} &>/dev/null
+
+  echo "  Testing s2i build"
+  local s2i_image_name=$IMAGE_NAME-testapp_$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 10 | head -n 1)
+
+  s2i build "file://${TEST_DIR}/examples/s2i-config-extension" "${IMAGE_NAME}" "${s2i_image_name}"
+
+  IMAGE_NAME=$s2i_image_name test_the_app_image s2i_config_build ""
+  
+  echo "  Testing s2i mount"
+
+  test_app_dir=$(mktemp -d)
+  chmod -R a+rX ${test_app_dir}
+
+  
+
 }
 
 function run_tests() {
@@ -237,19 +252,19 @@ function run_tests() {
   test_redis "$container_ip" "$PASS"
 }
 
-function run_tests_no_pass() {
+run_tests_no_pass() {
   run_tests no_pass
 }
 
-function run_tests_pass_no_root() {
+run_tests_pass_no_root() {
   PASS=pass run_tests no_root
 }
 
-function run_test_arbitrary_uid_no_pass() {
+run_test_arbitrary_uid_no_pass() {
   CONTAINER_ARGS="-u 12345" run_tests no_pass_altuid
 }
 
-function run_test_arbitrary_uid_w_pass() {
+run_test_arbitrary_uid_w_pass() {
   CONTAINER_ARGS="-u 12345" PASS=pass run_tests no_root_altuid
 }
 
