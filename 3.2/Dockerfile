@@ -46,7 +46,7 @@ RUN getent group  redis &> /dev/null || groupadd -r redis &> /dev/null && \
 RUN yum install -y yum-utils gettext && \
     yum install -y centos-release-scl && \
     yum-config-manager --enable centos-sclo-rh-testing && \
-    INSTALL_PKGS="rh-redis32" && \
+    INSTALL_PKGS="rh-redis32 groff" && \
     yum install -y --setopt=tsflags=nodocs --nogpgcheck $INSTALL_PKGS && \
     rpm -V $INSTALL_PKGS && \
     yum clean all && \

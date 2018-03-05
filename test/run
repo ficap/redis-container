@@ -101,29 +101,29 @@ function test_redis() {
 function run_change_password_test() {
   local tmpdir=$(mktemp -d)
   mkdir "${tmpdir}/data" && chmod -R a+rwx "${tmpdir}"
-
+  local id=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 10 | head -n 1)
   # Create Redis container with persistent volume and set the initial password
   CONTAINER_ARGS="-e REDIS_PASSWORD=foo \
     -v ${tmpdir}:/var/lib/redis/data:Z" \
-    ct_create_container "testpass1"
+    ct_create_container "testpass1-$id"
 
-  test_connection testpass1 foo
-  docker stop $(ct_get_cid testpass1) >/dev/null
+  test_connection "testpass1-$id" foo
+  docker stop $(ct_get_cid "testpass1-$id") >/dev/null
 
   # Create second container with changed password
   CONTAINER_ARGS="-e REDIS_PASSWORD=bar \
     -v ${tmpdir}:/var/lib/redis/data:Z" \
-    ct_create_container "testpass2"
+    ct_create_container "testpass2-$id"
 
-  test_connection testpass2 bar
+  test_connection "testpass2-$id" bar
 
   # The old password should not work anymore
-  container_ip="$(ct_get_cip testpass2)"
+  container_ip="$(ct_get_cip "testpass2-$id")"
   if connection_works "$container_ip" foo ; then
-    docker stop $(ct_get_cid testpass2) >/dev/null
+    docker stop $(ct_get_cid "testpass2-$id") >/dev/null
     return 1
   fi
-  docker stop $(ct_get_cid testpass2) >/dev/null
+  docker stop $(ct_get_cid "testpass2-$id") >/dev/null
 
 }
 
@@ -194,19 +194,23 @@ test_the_app_image() {
   
   # test whether s2i provided config is overridable using envvars
   run_change_password_test
-
+  local id=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 10 | head -n 1)
+  ct_create_container "$container_name-$id"
   # test whether s2i provided config took place
+  test_connection "$container_name-$id" "random_pass"
+  
+  docker stop "$(get_cid "$container_name-$id")" > /dev/null
 
-  test_connection ${container_name} "random_pass"
+  local id=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 10 | head -n 1)
 
     CONTAINER_ARGS="
 -e REDIS_PASSWORD=''
 ${mount_opts}
-" ct_create_container "$container_name"
+" ct_create_container "$container_name-$id"
 
-  test "$(redis_cmd $(ct_get_cip $container_name) "" CONFIG GET maxclients)" == '5000'
+  test "$(redis_cmd $(ct_get_cip "$container_name-$id") "" CONFIG GET maxclients)" == '5000'
   
-  docker stop "$(get_cid $container_name)" > /dev/null
+  docker stop "$(get_cid "$container_name-$id")" > /dev/null
 
 }
 
